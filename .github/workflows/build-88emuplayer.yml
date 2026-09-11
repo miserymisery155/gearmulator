@@ -16,32 +16,23 @@ jobs:
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
+      - name: Setup Ninja
+        uses: seanmiddleditch/gha-setup-ninja@master
+
       - name: Configure
-        run: |
-          cmake --preset windows-x64 `
-            -Dgearmulator_BUILD_JUCEPLUGIN=ON
+        run: cmake --preset windows-x64 -Dgearmulator_BUILD_JUCEPLUGIN_Standalone=ON
 
-      - name: Show generated targets
-        run: |
-          cmake --build temp/cmake_windows-x64 --target help
-
-      - name: Build 88emuPlayer
-        run: |
-          cmake --build temp/cmake_windows-x64 --target 88emuplayer_Standalone --parallel 4
+      - name: Build 88emuplayer
+        run: cmake --build temp/cmake_windows-x64 --target 88emuplayer_Standalone --config Release --parallel 4
 
       - name: Find executable
         shell: pwsh
         run: |
-          Write-Host "Looking for 88emuPlayer.exe..."
-          Get-ChildItem -Path . -Recurse -Filter "88emuPlayer*.exe" |
-            ForEach-Object {
-              Write-Host $_.FullName
-            }
+          Get-ChildItem -Path . -Recurse -Filter "88emuPlayer*.exe" | ForEach-Object { Write-Host $_.FullName }
 
       - name: Upload 88emuPlayer
         uses: actions/upload-artifact@v4
         with:
           name: 88emuPlayer-windows
-          path: |
-            **/88emuPlayer*.exe
+          path: "**/88emuPlayer*.exe"
           if-no-files-found: error
