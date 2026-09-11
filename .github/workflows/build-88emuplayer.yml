@@ -20,19 +20,38 @@ jobs:
         uses: seanmiddleditch/gha-setup-ninja@master
 
       - name: Configure
-        run: cmake --preset windows-x64 -DCMAKE_BUILD_TYPE=Release -Dgearmulator_BUILD_JUCEPLUGIN_Standalone=ON
+        run: |
+          cmake --preset windows-x64 `
+            -DCMAKE_BUILD_TYPE=Release `
+            -Dgearmulator_BUILD_JUCEPLUGIN_Standalone=ON `
+            -Dgearmulator_BUILD_JUCEPLUGIN_CLAP=ON `
+            -Dgearmulator_BUILD_JUCEPLUGIN_VST3=ON `
+            -Dgearmulator_BUILD_JUCEPLUGIN_VST2=OFF `
+            -Dgearmulator_BUILD_JUCEPLUGIN_AU=OFF `
+            -Dgearmulator_BUILD_JUCEPLUGIN_LV2=OFF `
+            -Dgearmulator_SYNTH_OSIRUS=OFF `
+            -Dgearmulator_SYNTH_OSTIRUS=OFF `
+            -Dgearmulator_SYNTH_VAVRA=OFF `
+            -Dgearmulator_SYNTH_XENIA=OFF `
+            -Dgearmulator_SYNTH_NODALRED2X=OFF `
+            -Dgearmulator_SYNTH_JE8086=OFF `
+            -Dgearmulator_SYNTH_88EMU=ON
 
-      - name: Build 88emuplayer
-        run: cmake --build temp/cmake_windows-x64 --target 88emuplayer_Standalone --config Release --parallel 4
+      - name: Build 88emu
+        run: cmake --build temp/cmake_windows-x64 --config Release --parallel 4
 
-      - name: Find executable
+      - name: Find outputs
         shell: pwsh
         run: |
-          Get-ChildItem -Path . -Recurse -Filter "88emuPlayer*.exe" | ForEach-Object { Write-Host $_.FullName }
+          Get-ChildItem -Path . -Recurse -Include "88emuPlayer*.exe","*88*.vst3","*88*.clap" |
+            ForEach-Object { Write-Host $_.FullName }
 
       - name: Upload 88emuPlayer
         uses: actions/upload-artifact@v4
         with:
           name: 88emuPlayer-windows
-          path: "**/88emuPlayer*.exe"
+          path: |
+            **/88emuPlayer*.exe
+            **/*88*.vst3
+            **/*88*.clap
           if-no-files-found: error
