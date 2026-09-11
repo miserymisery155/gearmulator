@@ -1,29 +1,47 @@
-name: Build 88emuplayer
+name: Build 88emuPlayer
+
 on:
   workflow_dispatch:
-  push:
 
 jobs:
   build:
     runs-on: windows-2022
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: "recursive"
 
-      - name: Set up MSVC compiler
+    steps:
+      - name: Checkout Gearmulator
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        run: |
+          cmake --preset windows-x64 `
+            -Dgearmulator_BUILD_JUCEPLUGIN=ON
 
-      - name: List targets
-        run: cmake --build build --target help
+      - name: Show generated targets
+        run: |
+          cmake --build temp/cmake_windows-x64 --target help
 
-      - name: Upload exe
+      - name: Build 88emuPlayer
+        run: |
+          cmake --build temp/cmake_windows-x64 --target 88emuplayer_Standalone --parallel 4
+
+      - name: Find executable
+        shell: pwsh
+        run: |
+          Write-Host "Looking for 88emuPlayer.exe..."
+          Get-ChildItem -Path . -Recurse -Filter "88emuPlayer*.exe" |
+            ForEach-Object {
+              Write-Host $_.FullName
+            }
+
+      - name: Upload 88emuPlayer
         uses: actions/upload-artifact@v4
         with:
-          name: 88emuplayer-windows
+          name: 88emuPlayer-windows
           path: |
-            bin/plugins/**/88emuPlayer*.exe
-            build/**/88emuPlayer*.exe
+            **/88emuPlayer*.exe
+          if-no-files-found: error
