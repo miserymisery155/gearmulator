@@ -15,13 +15,15 @@ jobs:
 
       - name: Set up MSVC
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
 
       - name: Setup Ninja
         uses: seanmiddleditch/gha-setup-ninja@master
 
       - name: Configure
         run: |
-          cmake --preset windows-x64 `
+          cmake -G Ninja -B temp/cmake_windows-x64 `
             -DCMAKE_BUILD_TYPE=Release `
             -Dgearmulator_BUILD_JUCEPLUGIN_Standalone=ON `
             -Dgearmulator_BUILD_JUCEPLUGIN_CLAP=ON `
@@ -55,4 +57,3 @@ jobs:
             **/*88*.vst3
             **/*88*.clap
           if-no-files-found: error
-
