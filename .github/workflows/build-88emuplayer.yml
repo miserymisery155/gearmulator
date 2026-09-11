@@ -17,8 +17,8 @@ jobs:
       - name: Configure
         run: cmake -B build -DCMAKE_BUILD_TYPE=Release
 
-      - name: Build 88emuplayer Standalone
-        run: cmake --build build --target 88emuplayer_Standalone --config Release
+      - name: List targets
+        run: cmake --build build --target help
 
       - name: Upload exe
         uses: actions/upload-artifact@v4
