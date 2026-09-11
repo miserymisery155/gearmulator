@@ -20,7 +20,7 @@ jobs:
         uses: seanmiddleditch/gha-setup-ninja@master
 
       - name: Configure
-        run: cmake --preset windows-x64 -Dgearmulator_BUILD_JUCEPLUGIN_Standalone=ON
+        run: cmake --preset windows-x64 -DCMAKE_BUILD_TYPE=Release -Dgearmulator_BUILD_JUCEPLUGIN_Standalone=ON
 
       - name: Build 88emuplayer
         run: cmake --build temp/cmake_windows-x64 --target 88emuplayer_Standalone --config Release --parallel 4
