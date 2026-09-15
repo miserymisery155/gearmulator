@@ -12,6 +12,91 @@ Legend: `[ ]` open, `[x]` done, `[-]` deliberately not doing.
 
 ---
 
+## Still to do
+
+Not part of the numbered list, but do not lose these.
+
+**Blocking a release**
+
+- [x] **Build the two macOS-only fixes on a Mac.** B3 (`f6116ea2a`, the Metal viewport was read
+      off the juce component tree from the render thread) and C4 (`ad1e594dc`, a zero viewport
+      deadlocked the render handshake) are both inside `#ifdef RMLUI_METAL_RENDERER` and have
+      never been compiled, here or anywhere. They also depend on each other: C4 removes the gate
+      that makes B3's own size guard load bearing, so neither is correct without the other. A Mac
+      build, not the CI leg being the first look.
+      *Compiled 2026-09-11 on m2mac:* public `gearmulator/main` at `de36fa813`, which contains both, in
+      a throwaway worktree `wt/review88` (Unix Makefiles, deployment target 11.0). `juceRmlUi` built
+      universal (`x86_64 arm64`) with `RMLUI_METAL_RENDERER=1`; `juceRmlComponent.cpp` and
+      `MetalContext.mm` compiled with no warnings, and the build had 0 errors. Not verified at
+      runtime: an app launched over SSH gets no window peer, so actually rendering through Metal - the
+      startup and resize paths these two fix - still needs a GUI session.
+
+- [x] **Merge `oss/main` into private `main` - its Jenkins build fails the Virus integration test.**
+      Jenkins #1776 (2026-09-10) built private `main` at `9f039161d` and failed `virusIntegrationTests`
+      ("difference starting at frame 50348, ROM First_A_28, preset Overture K"), so Deploy, Upload and
+      GitHub were skipped. Frame 50348 is 1.049 s, the Virus A MIDI watchdog timeout: the NAS reference
+      wavs were regenerated 2026-09-09 15:10 for `028b86d60` ("feed the Virus A MIDI watchdog"), which
+      is on `oss/main`, `gearmulator/main` and a device branch but not private `main`. Not a code defect,
+      and not the TCC stall that build is otherwise remembered for.
+      Verified 2026-09-11: `oss/main` at `92f4ab75f` passes every integration case on Windows after a
+      fresh ctest rclone sync.
+      *Done 2026-09-11:* merged without a checkout and pushed, private `main` `9f039161d..0d0c394c5`, a
+      fast-forward. Before pushing, all 13 submodule pointers in the range fetched from their public repos,
+      and `virusIntegrationTests` passed 19/19 on exactly that code (`dsp56300` at `04d30c02`) after a
+      fresh sync. Jenkins `dsp56300_main_multi` #492 re-ran it with Deploy, Upload and GitHub off: all
+      four platforms built `0d0c394c5` and passed ctest including `virusIntegrationTests` - win #1790
+      46/46, mac #1791 58/58, linux arm #1792 46/46, linux x86 #1793 46/46.
+
+**Worth doing soon**
+
+- [x] **Audit ctest for other silently unrun tests.** `sc88Thread` reported "Not Run" for its whole
+      life because `88lib` is added with `EXCLUDE_FROM_ALL`. Same for `hardwareLib`. Both fixed.
+      *Done 2026-09-11:* all 50 registered tests are referenced by `ALL_BUILD`, so a full build
+      compiles every one; nothing else is excluded. Jenkins `main` builds run ctest after a full build
+      and were clean on 2026-09-05 (39/39 Linux x86, ARM and Windows, 51/51 Mac, no "Not Run").
+      Device-branch builds switch `IntegrationTests` off. The public GitHub workflows (`cmake.yml`,
+      `nightly.yml`, `release.yml`) never run ctest at all - only the private `private-build.yml`
+      does. Adding a ctest step to `cmake.yml` would be cheap; not done, it is a CI decision.
+- [x] **Fix the partial-sysex fall-through** in `plugin.cpp:361` - see "Pre-existing, not from this
+      commit" below. It has a diagnosis and a one word fix (`return`), it just does not belong in a
+      commit from this review.
+      *Done 2026-09-11:* the block now returns once a chunk is folded into the pending message, so the
+      device sees the reassembled dump only. A fragment with no start before it is dropped instead of
+      sent raw - every producer checked (host, hardware input, 88emu player and bridge, MCP) delivers
+      complete messages; the only headless source is the `processor.cpp` doubled-`F7` bug below.
+      `device_test` drives a real `Plugin` with three chunks plus an orphan and aborts without the fix.
+
+**Offered during the review, not started**
+
+- [ ] **Runtime samplerate switching for a device that sets its rate from a menu.** The framework
+      already supports it end to end; a device opts in by overriding `getDynamicSamplerates()` and
+      reporting the current rate from `getSamplerate()`. See F1 - the whole subsystem was nearly
+      deleted as unused before this use case turned up, so it is worth having a real consumer.
+- [ ] **Drive the LCD cursor path.** `jucePluginEditorLib::Lcd::setCursor()` has no caller, so the
+      blink timer and the underline renderer have never run and the C8 fix protects nothing. The
+      natural driver is the Waldorf panels - microQ/XT are HD44780 based and do show a cursor.
+      See F3.
+- [ ] **Make the combo window popup skinnable.** `ComboPopupLookAndFeel` has four colours and a
+      font size compiled into framework code, shared by every combo that asks for `popup="window"`.
+      Fine while only the 88emu player uses it. Reading them from the element's computed values is
+      ~20 lines, but it changes how a window looks and wants eyes on the result. See F6.
+
+**Trivia**
+
+- [x] `dynamicSamplerate_test.cpp:112` warns C4244 - `const float oldRate = _host == 32000 ? 48000
+      : 32000` needs `.0f` suffixes. Pre-existing, left alone to keep it out of unrelated commits.
+      *Done 2026-09-11:* it was six warnings, on lines 84, 106, 111 and 112 - every sample rate written
+      as an int literal where a float is meant. They are float literals now and the file builds clean.
+
+**Not committed anywhere yet**
+
+- [x] Push what is ahead of `gearmulator/main`. Public `gearmulator/main` stops at `de36fa813` (H3);
+      group I and the doc commits are only on private `main` (`0d0c394c5`) so far.
+      *Done 2026-09-11:* pushed `de36fa813..ce43cd5cd`, a fast-forward. The range's one submodule bump
+      (`dsp56300` at `04d30c02`) fetched from its public repo first.
+
+---
+
 ## A. Real-time and threading — fix before the release build
 
 - [x] **A1 `jucePluginLib/processor.cpp:856` — `updateLatencySamples()` runs inside `processBlock`.**
@@ -272,6 +357,20 @@ Legend: `[ ]` open, `[x]` done, `[-]` deliberately not doing.
       `findFiles` is `findFilesRecursive` at depth 0 — its own caller in `romLoader.cpp:57`
       is an if/else differing only in the depth argument. Forwarding also fixes `findFiles`
       returning directories whose name matches the extension.
+      *Wrong, reverted 2026-09-11:* both branches of that if/else call `findFilesRecursive`. It never
+      involved `findFiles`, and "depth 0 is the flat scan" holds for a ROM search and nothing else.
+      Without a filter, `findFiles` returns every entry of the folder, subfolders included, and
+      `DB::loadFolder` builds its child folder sources from exactly that. `findFilesRecursive` never
+      returns a folder, so the forward (`8183f0a62`, public) left every folder data source in every
+      product without its subfolders. The review checked the ROM loaders and no other caller, and
+      nothing tested what `findFiles` returns.
+      The pre-review `findFiles` is back with one line more. G3 made `getFileSize` report 0 for a
+      folder; on Linux it used to report what `ftell` says for one, 2^63-1 on ext4, and that kept
+      folders out of every size range. Without the skip, the DSP Bridge server's ROM search (no
+      extension, 0 to 16 MB) returns its subfolders, and `readFile` throws `std::bad_alloc` on the
+      first one. `synthLibTests` pins what `findFiles` returns, and `jucePluginLibTests` checks that
+      a folder source finds a nested folder. Nothing saved was lost, and no release had it: 2.2.19
+      was built from `a099fec78`, 13 minutes before the forward.
 
 - [x] **G3 `baseLib/filesystem.cpp:194` — `statEntry` duplicates `isDirectory` and `getFileSize`.**
       Combining two stats into one is a fair reason for a helper, but the copy carries two fixes —
@@ -307,16 +406,19 @@ Legend: `[ ]` open, `[x]` done, `[-]` deliberately not doing.
 
 ## I. Conventions (CLAUDE.md)
 
-- [ ] **I1 `synthLib/device_test.cpp` and `midiRateLimiter_test.cpp` are space-indented.**
+- [x] **I1 `synthLib/device_test.cpp` and `midiRateLimiter_test.cpp` are space-indented.**
       "Tabs for indentation (tab size 4, UseTab: Always)". `device_test.cpp` is 58 space lines and
       0 tab lines; `midiRateLimiter_test.cpp` mixes both. `dynamicSamplerate_test.cpp`, added in
       the same commit, is correctly tabbed.
 
-- [ ] **I2 Test-class members lack the `m_` prefix.**
+- [x] **I2 Test-class members lack the `m_` prefix.**
       "`m_` member prefix" — `device_test.cpp:20-21` (`midiSent`, `transportEvents`) and
       `dynamicSamplerate_test.cpp:28-29` (`rate`, `samples`).
 
-- [ ] **I3 `hardwareLib/sed1335.cpp:131` exceeds the 120-column limit** (133 at tab=4).
+- [x] **I3 `hardwareLib/sed1335.cpp:131` exceeds the 120-column limit** (133 at tab=4).
+      Also fixed the three over-limit lines this review itself wrote (A1 `plugin.cpp`, A2 `plugin.h`,
+      H3 `rmlElemComboBox.cpp`), found with `git blame -w` restricted to review commits. The other
+      long lines in the touched files predate the review and were left alone.
 
 ---
 
@@ -401,7 +503,7 @@ Recorded so they are not re-litigated:
   forgetting it - is now named in the header.
 - **F1, the dynamic-samplerate subsystem** — no implementer today (verified: no device's rate moves
   at runtime, 88emu model switching replaces the whole `Plugin`, `setState` re-reads the rate), but
-  it is NOT speculative. The TC M-One XL selects its sample rate from a front panel menu, i.e. the
+  it is NOT speculative. Some hardware selects its sample rate from a front panel menu, i.e. the
   firmware changes the clock while running, and the per-block `getSamplerate()` poll is the only
   thing that would notice. Kept and documented rather than deleted, on the user's call.
   A device opts in by overriding `getDynamicSamplerates()`; that is the whole contract.
@@ -435,11 +537,28 @@ Worth fixing, but do not attribute them to the 88emu work:
   the `if (!_ev.sysex.empty())` block needs a `return` at its end. A middle or end chunk is
   appended to `m_pendingSysexInput` and then *also* pushed raw, so the device sees a headless
   fragment alongside the reassembled message. Reachable whenever hardware splits a dump.
+  *Fixed 2026-09-11, see "Still to do".*
 - `processor.cpp:812` — the doubled-`F7` branch erases the **front** byte (the `F0`) instead of the
-  duplicate tail; copy-paste of the doubled-`F0` branch above it. Host-reachable via VST3
-  double-wrapping, and it produces exactly the state that walks into the fall-through above.
+  duplicate tail; copy-paste of the doubled-`F0` branch above it. It produced exactly the state that
+  walks into the fall-through above. Not reachable through any wrapper in the tree: JUCE's VST3
+  wrapper requires the host's `F0`/`F7`, strips them and adds one frame back, our VST2 fork
+  reassembles chunks and passes complete dumps, and CLAP passes the host buffer as is - only a host
+  that frames twice itself gets here.
+  *Fixed 2026-09-11:* the cleanup is now `synthLib::MidiToSysex::removeDuplicateFraming()`, which drops
+  the doubled tail, with a test in `synthLibTests`.
+- `processor.cpp:821` — the short-message branch of host MIDI read `getRawData()[1]` when the message
+  had more than zero bytes and `[2]` when it had more than one, so 1- and 2-byte host messages (clock,
+  start/stop, program change, channel pressure) got an indeterminate `b`/`c`. Not a crash - JUCE keeps
+  messages up to eight bytes inline - but the bytes were junk. The hardware input path and the 88emu
+  player had it right; three copies of the same conversion had drifted apart.
+  *Fixed 2026-09-11:* all three now call `synthLib::setShortMessage()` in `midiTypes.h`, with a test in
+  `synthLibTests`. Found while fixing the entry above.
 - `rmlMenu.cpp:47` — `if (!isOpen()) close();` is inverted. Latent: every current caller allocates
   a fresh `Menu`, so the second-open path is unreachable.
+  *Fixed 2026-09-11:* the guard now closes a menu that is still open before building it again.
+  Compile-checked only - no caller reaches the path, and RmlUi has no headless test context here.
 - `midiRateLimiter.cpp:150` — channel voice messages jump ahead of queued sysex because everything
   non-sysex goes into `m_pendingRealtime`. Live on JE8086; only System Real Time is entitled to
   overtake.
+  *Not a bug, left as is (2026-09-11):* notes overtaking queued sysex is intended - note timing
+  matters more than sysex order.

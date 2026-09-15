@@ -671,7 +671,17 @@ namespace pluginLib::patchDB
 		Data data;
 		if (!requestPatchForPart(data, _part, _userData) || data.empty())
 			return {};
-		return initializePatch(std::move(data), {});
+		return createPatch(std::move(data), {});
+	}
+
+	PatchPtr DB::createPatch(Data&& _sysex, const std::string& _defaultPatchName)
+	{
+		auto patch = initializePatch(std::move(_sysex), _defaultPatchName);
+
+		[[maybe_unused]] const bool hasHash = !patch || patch->hash != PatchHash{};
+		assert(hasHash && "initializePatch has to set Patch::hash");
+
+		return patch;
 	}
 
 	void DB::getTags(const TagType _type, std::set<Tag>& _tags)
@@ -1039,7 +1049,7 @@ namespace pluginLib::patchDB
 
 			for (uint32_t p = 0; p < data.size(); ++p)
 			{
-				if (const auto patch = initializePatch(std::move(data[p]), defaultName))
+				if (const auto patch = createPatch(std::move(data[p]), defaultName))
 				{
 					patch->source = ds->weak_from_this();
 
@@ -1061,6 +1071,19 @@ namespace pluginLib::patchDB
 		}
 	}
 
+	std::map<PatchKey, PatchModificationsPtr>::iterator DB::findModifications(
+		std::map<PatchKey, PatchModificationsPtr>& _modifications, const Patch& _patch)
+	{
+		PatchKey key(_patch);
+
+		const auto it = _modifications.find(key);
+		if (it != _modifications.end() || key.hash == PatchHash{})
+			return it;
+
+		key.hash.fill(0);
+		return _modifications.find(key);
+	}
+
 	bool DB::addPatches(const std::vector<PatchPtr>& _patches)
 	{
 		if (_patches.empty())
@@ -1070,10 +1093,8 @@ namespace pluginLib::patchDB
 
 		for (const auto& patch : _patches)
 		{
-			const auto key = PatchKey(*patch);
-
 			// find modification and apply it to the patch
-			const auto itMod = m_patchModifications.find(key);
+			const auto itMod = findModifications(m_patchModifications, *patch);
 			if (itMod != m_patchModifications.end())
 			{
 				auto mods = itMod->second;
@@ -1559,8 +1580,7 @@ namespace pluginLib::patchDB
 		// apply modifications to patches
 		for (const auto& patch : _patches)
 		{
-			const auto key = PatchKey(*patch);
-			const auto it = patchModifications.find(key);
+			const auto it = findModifications(patchModifications, *patch);
 			if(it != patchModifications.end())
 			{
 				assign(patch, it->second);
@@ -1683,21 +1703,30 @@ namespace pluginLib::patchDB
 			}
 			json->setProperty("datasources", dss);
 
-			// save MIDI bank assignments for all datasources (including ROM)
+			// save MIDI bank assignments for all datasources (including ROM), and those still waiting for their
+			// datasource, such as the ROM banks of a ROM that is not loaded right now
 			juce::Array<juce::var> bankAssignments;
+
+			const auto addBankAssignment = [&bankAssignments](const DataSource& _ds, const uint32_t _midiBankNumber)
+			{
+				auto* o = new juce::DynamicObject();
+				o->setProperty("type", juce::String(toString(_ds.type)));
+				o->setProperty("name", juce::String(_ds.name));
+				o->setProperty("bank", static_cast<int>(_ds.bank));
+				o->setProperty("midiBankNumber", static_cast<int>(_midiBankNumber));
+				bankAssignments.add(o);
+			};
+
 			for (const auto& it : m_dataSources)
 			{
 				const auto& dataSource = it.second;
-				if (dataSource->midiBankNumber == g_invalidMidiBankNumber)
-					continue;
-
-				auto* o = new juce::DynamicObject();
-				o->setProperty("type", juce::String(toString(dataSource->type)));
-				o->setProperty("name", juce::String(dataSource->name));
-				o->setProperty("bank", static_cast<int>(dataSource->bank));
-				o->setProperty("midiBankNumber", static_cast<int>(dataSource->midiBankNumber));
-				bankAssignments.add(o);
+				if (dataSource->midiBankNumber != g_invalidMidiBankNumber)
+					addBankAssignment(*dataSource, dataSource->midiBankNumber);
 			}
+
+			for (const auto& [dataSource, midiBankNumber] : m_pendingMidiBankAssignments)
+				addBankAssignment(dataSource, midiBankNumber);
+
 			json->setProperty("midiBankAssignments", bankAssignments);
 
 			saveLocalStorage();
@@ -1947,6 +1976,7 @@ namespace pluginLib::patchDB
 			std::unordered_map<TagType, std::set<Tag>> resultTags;
 			std::unordered_map<TagType, std::unordered_map<Tag, uint32_t>> resultTagColors;
 			std::map<PatchKey, PatchModificationsPtr> resultPatchModifications;
+			std::vector<DataSourceNodePtr> romDataSources;
 
 			if(auto s = stream.tryReadChunk(chunks::g_patchManagerDataSources, 1))
 			{
@@ -1975,6 +2005,10 @@ namespace pluginLib::patchDB
 				std::vector<DataSourceNodePtr> nodes;
 				nodes.resize(dataSources.size());
 
+				std::set<uint32_t> parents;
+				for (const auto& it : childToParentMap)
+					parents.insert(it.second);
+
 				// create root nodes first
 				for(uint32_t i=0; i<dataSources.size(); ++i)
 				{
@@ -1983,6 +2017,14 @@ namespace pluginLib::patchDB
 
 					const auto& ds = dataSources[i];
 					const auto node = std::make_shared<DataSourceNode>(ds);
+
+					// ROM banks are registered by the plugin again, see below. A parent is kept, its children need it
+					if(ds.type == SourceType::Rom && parents.find(i) == parents.end())
+					{
+						romDataSources.push_back(node);
+						continue;
+					}
+
 					nodes[i] = node;
 					resultDataSources.insert({ds, node});
 				}
@@ -2101,6 +2143,30 @@ namespace pluginLib::patchDB
 			m_tagColors = resultTagColors;
 			m_patchModifications = resultPatchModifications;
 
+			// ROM banks are not taken from the cache. The plugin registers the banks of the ROM it has loaded on every
+			// start, and a cached bank outlives a change of that ROM, another model or another version, or presets
+			// built by other code: it keeps offering presets the ROM does not have, and banks the ROM lacks. Keep what
+			// the user set instead, so that it comes back when the plugin registers the bank: the tags, favourites and
+			// names of its presets as after removing a data source, and its MIDI bank number as one from the json.
+			for (const auto& ds : romDataSources)
+			{
+				for (const auto& patch : ds->patches)
+				{
+					patch->source = ds->weak_from_this();
+					preservePatchModifications(patch);
+				}
+				ds->patches.clear();
+
+				if (ds->midiBankNumber != g_invalidMidiBankNumber)
+				{
+					DataSource key;
+					key.type = ds->type;
+					key.name = ds->name;
+					key.bank = ds->bank;
+					m_pendingMidiBankAssignments.insert({key, ds->midiBankNumber});
+				}
+			}
+
 			for (const auto& it: resultDataSources)
 			{
 				const auto& patches = it.second->patches;
@@ -2141,7 +2207,18 @@ namespace pluginLib::patchDB
 			{
 				baseLib::ChunkWriter cwDS(outStream, chunks::g_patchManagerDataSources, 1);
 
-				outStream.write<uint32_t>(static_cast<uint32_t>(m_dataSources.size()));
+				// a MIDI bank number still waiting for its ROM bank is kept as that bank without presets, which loadCache
+				// turns back into a waiting one. Only for ROM banks, loadCache restores any other datasource as it is
+				std::vector<DataSource> waitingRomBanks;
+				for (const auto& [dataSource, midiBankNumber] : m_pendingMidiBankAssignments)
+				{
+					if (dataSource.type != SourceType::Rom)
+						continue;
+					waitingRomBanks.push_back(dataSource);
+					waitingRomBanks.back().midiBankNumber = midiBankNumber;
+				}
+
+				outStream.write<uint32_t>(static_cast<uint32_t>(m_dataSources.size() + waitingRomBanks.size()));
 
 				// create an id map to save space when writing child->parent dependencies
 				std::map<DataSource, uint32_t> idMap;
@@ -2154,6 +2231,10 @@ namespace pluginLib::patchDB
 
 					it.second->write(outStream);
 				}
+
+				// behind the others, the child->parent ids below refer to those
+				for (const auto& ds : waitingRomBanks)
+					ds.write(outStream);
 
 				// create child->parent map
 				std::map<uint32_t, uint32_t> childToParent;
