@@ -278,6 +278,9 @@ namespace synthLib
 		MidiEventSource source;
 		MidiEventType type = MidiEventType::Midi;
 		uint32_t transportGeneration = 0;
+		// File-player SysEx may be discarded before transmission on a song change.
+		// External dumps retain the default and must always arrive whole.
+		bool cancelOnTransportChange = false;
 		// Physical / virtual MIDI port the event belongs to (devices with several
 		// MIDI inputs or outputs, e.g. the SC-88 family's IN A/B and USB cables).
 		uint8_t port = 0;
@@ -288,14 +291,14 @@ namespace synthLib
 
 		SMidiEvent(const SMidiEvent& _e)
 			: a(_e.a), b(_e.b), c(_e.c), sysex(_e.sysex), offset(_e.offset), source(_e.source), type(_e.type)
-			, transportGeneration(_e.transportGeneration), port(_e.port)
+			, transportGeneration(_e.transportGeneration), cancelOnTransportChange(_e.cancelOnTransportChange), port(_e.port)
 		{
 			assert(empty() || source != MidiEventSource::Unknown);
 		}
 
 		SMidiEvent(SMidiEvent&& _e) noexcept
 			: a(_e.a), b(_e.b), c(_e.c), sysex(std::move(_e.sysex)), offset(_e.offset), source(_e.source), type(_e.type)
-			, transportGeneration(_e.transportGeneration), port(_e.port)
+			, transportGeneration(_e.transportGeneration), cancelOnTransportChange(_e.cancelOnTransportChange), port(_e.port)
 		{
 			assert(empty() || source != MidiEventSource::Unknown);
 		}
@@ -312,6 +315,7 @@ namespace synthLib
 			source = _e.source;
 			type = _e.type;
 			transportGeneration = _e.transportGeneration;
+			cancelOnTransportChange = _e.cancelOnTransportChange;
 			port = _e.port;
 			assert(empty() || source != MidiEventSource::Unknown);
 			return *this;
@@ -327,6 +331,7 @@ namespace synthLib
 			source = _e.source;
 			type = _e.type;
 			transportGeneration = _e.transportGeneration;
+			cancelOnTransportChange = _e.cancelOnTransportChange;
 			port = _e.port;
 			assert(empty() || source != MidiEventSource::Unknown);
 			return *this;
@@ -338,19 +343,22 @@ namespace synthLib
 		}
 	};
 
-	// Whether this event's delivery is tied to the host transport: it belongs to a generation, is
-	// discarded when the transport jumps, and is replaced by the All Sound Off that follows. SysEx
-	// never is - a dump has to arrive whole no matter what the transport does - and neither is
-	// anything a device produced itself.
-	//
-	// The write side (Plugin::stampTransportGeneration) and the read side
-	// (MidiRateLimiter::transportDiscontinuity) must agree on this exactly, which is why it lives
-	// here rather than in either of them. Disagreeing either way is silent: an event that is
-	// stamped but not purged survives a seek forever, and one that is purged but never stamped
-	// keeps generation 0 and is dropped on every discontinuity there is.
+	// Host/internal short messages follow transport generations; their SysEx opts in explicitly.
+	// Stamping and cancellation must use the same classification. Physical/device events survive.
 	inline bool isTransportBound(const SMidiEvent& _event)
 	{
-		return _event.sysex.empty() &&
+		return (_event.sysex.empty() || _event.cancelOnTransportChange) &&
 			(_event.source == MidiEventSource::Host || _event.source == MidiEventSource::Internal);
+	}
+
+	// Copies a message of one to three bytes - anything but SysEx - into a, b and c. The data bytes
+	// a message does not have are zeroed, not read: a MIDI API's buffer may hold anything past the
+	// end of the message, and a program change must not pick up a third byte from it.
+	inline void setShortMessage(SMidiEvent& _event, const uint8_t* _data, const size_t _size)
+	{
+		assert(_size >= 1 && _size <= 3);
+		_event.a = _data[0];
+		_event.b = _size > 1 ? _data[1] : 0;
+		_event.c = _size > 2 ? _data[2] : 0;
 	}
 }

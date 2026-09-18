@@ -25,13 +25,13 @@ namespace
 	{
 	public:
 		ClockDevice() : Device({}) {}
-		float rate = 32000;
-		size_t samples = 0;
-		float getSamplerate() const override { return rate; }
+		float m_rate = 32000;
+		size_t m_samples = 0;
+		float getSamplerate() const override { return m_rate; }
 		void getDynamicSamplerates(std::vector<float>& _dst) const override { _dst = {32000, 48000}; }
 		bool isValid() const override { return true; }
 		bool getState(std::vector<uint8_t>&, synthLib::StateType) override { return true; }
-		bool setState(const std::vector<uint8_t>&, synthLib::StateType) override { rate = 48000; return true; }
+		bool setState(const std::vector<uint8_t>&, synthLib::StateType) override { m_rate = 48000; return true; }
 		uint32_t getChannelCountIn() override { return 2; }
 		uint32_t getChannelCountOut() override { return 2; }
 		bool setDspClockPercent(uint32_t) override { return false; }
@@ -43,7 +43,7 @@ namespace
 		bool sendMidi(const synthLib::SMidiEvent&, std::vector<synthLib::SMidiEvent>&) override { return true; }
 		void processAudio(const synthLib::TAudioInputs& _ins, const synthLib::TAudioOutputs& _outs, size_t _count) override
 		{
-			samples += _count;
+			m_samples += _count;
 			for(size_t c = 0; c < 2; ++c)
 				std::copy_n(_ins[c], _count, _outs[c]);
 		}
@@ -81,7 +81,7 @@ namespace
 		{
 			g_allocations = 0;
 			g_countAllocations = true;
-			resampler.setDeviceSamplerate(pass % 2 ? 48000 : 32000);
+			resampler.setDeviceSamplerate(pass % 2 ? 48000.0f : 32000.0f);
 			g_countAllocations = false;
 			require(g_allocations == 0, "prepared rate switch allocated");
 			std::fill_n(in, 256, 0.0f);
@@ -103,13 +103,13 @@ namespace
 		{
 			midi.assign(1, synthLib::SMidiEvent{});
 			resampler.process(ins, outs, midi, midiOut, 1, render);
-			resampler.setDeviceSamplerate(i % 2 ? 32000 : 48000);
+			resampler.setDeviceSamplerate(i % 2 ? 32000.0f : 48000.0f);
 		}
 		for(int i = 0; i < 8; ++i)
 			resampler.process(ins, outs, {}, midiOut, 256, render);
 		require(received == 200, "rate switch lost or duplicated queued MIDI");
-		const float oldRate = _host == 32000 ? 48000 : 32000;
-		const float newRate = oldRate == 32000 ? 48000 : 32000;
+		const float oldRate = _host == 32000.0f ? 48000.0f : 32000.0f;
+		const float newRate = oldRate == 32000.0f ? 48000.0f : 32000.0f;
 		resampler.setDeviceSamplerate(oldRate);
 		midi.front().offset = 17;
 		resampler.process(ins, outs, midi, midiOut, 0, render);
@@ -147,25 +147,25 @@ namespace
 
 		for(float rate : {32000.0f, 48000.0f, 32000.0f, 48000.0f})
 		{
-			device.rate = rate;
+			device.m_rate = rate;
 			for(int i = 0; i < 8; ++i)
 				block();
-			const auto start = device.samples;
+			const auto start = device.m_samples;
 			for(int i = 0; i < 100; ++i)
 				block();
 			const double expected = 25600.0 * rate / _host;
-			require(std::abs(static_cast<double>(device.samples - start) - expected) < 4,
+			require(std::abs(static_cast<double>(device.m_samples - start) - expected) < 4,
 				"framework did not follow the device clock");
 		}
-		device.rate = 32000;
+		device.m_rate = 32000;
 		block();
 		require(plugin.setState({1, synthLib::StateTypeGlobal}), "state restore failed");
 		for(int i = 0; i < 8; ++i)
 			block();
-		const auto start = device.samples;
+		const auto start = device.m_samples;
 		for(int i = 0; i < 100; ++i)
 			block();
-		require(std::abs(static_cast<double>(device.samples - start) - 25600.0 * 48000 / _host) < 4,
+		require(std::abs(static_cast<double>(device.m_samples - start) - 25600.0 * 48000 / _host) < 4,
 			"state-restored clock did not reach resampler");
 		std::printf("PASS mode=%d host=%.0f\n", static_cast<int>(_mode), _host);
 	}

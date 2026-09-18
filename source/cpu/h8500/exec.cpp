@@ -27,12 +27,12 @@ namespace h8500 {
 // Re-dispatch the same cell (after filling it).
 #define H8_GOTO(c, ip) [[clang::musttail]] return (ip)->fn((c), (ip))
 #else
-// Without guaranteed tail calls the run loop dispatches; handlers just return
-// the next cell.
+// Without guaranteed tail calls the run loop dispatches: handlers return the
+// next cell, but the fill runs the cell it decoded so step() never only decodes.
 #define H8_END(c, next, states) \
   (c).budget_ -= s32(states);   \
   return (next)
-#define H8_GOTO(c, ip) return (ip)
+#define H8_GOTO(c, ip) return (ip)->fn((c), (ip))
 #endif
 
 struct ExecImpl {
@@ -720,6 +720,15 @@ struct ExecImpl {
     const Cell* next = c.cells_for(c.regs_.cp, c.regs_.pc);
     H8_END(c, next, c.exception_states() + stack_pen(c, ip->icnt));
   }
+  // Guard cell behind the page (icache.hpp): sequential flow ran past offset
+  // H'FFFF.  The 16-bit PC wraps to H'0000 and CP stays, since only PJMP/PJSR/
+  // PRTS/PRTD and exception entry change the page (H8/510 manual 3.6: "it is
+  // not possible to move continuously across a page boundary"; minimum mode
+  // has a single page).  Not an instruction: no states, no count.
+  static const Cell* wrap(Cpu& c, const Cell* ip) {
+    const Cell* next = here(c, pc_of(c, ip));
+    H8_GOTO(c, next);
+  }
 
   // ---------------------------------------------------------------------------
   // Fill: decode the instruction at this cell and install its handler.
@@ -975,6 +984,13 @@ const Cell* cell_fill(Cpu& cpu, const Cell* ip) {
   [[clang::musttail]] return ExecImpl::fill(cpu, ip);
 #else
   return ExecImpl::fill(cpu, ip);
+#endif
+}
+const Cell* cell_wrap(Cpu& cpu, const Cell* ip) {
+#if H8_HAS_MUSTTAIL
+  [[clang::musttail]] return ExecImpl::wrap(cpu, ip);
+#else
+  return ExecImpl::wrap(cpu, ip);
 #endif
 }
 }  // namespace detail

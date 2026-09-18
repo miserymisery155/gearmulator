@@ -46,6 +46,14 @@ namespace bridgeServer
 
 	void ClientConnection::handleData(const bridgeLib::PluginDesc& _desc)
 	{
+		// A client that found us via UDP has been checked already, one that connected to a configured host has not
+		if(_desc.protocolVersion != bridgeLib::g_protocolVersion)
+		{
+			errorClose(bridgeLib::ErrorCode::WrongProtocolVersion, "The plugin uses bridge protocol " + std::to_string(_desc.protocolVersion) +
+				" but this server uses " + std::to_string(bridgeLib::g_protocolVersion) + ". Update the plugin or the server so that both use the same.");
+			return;
+		}
+
 		m_pluginDesc = _desc;
 		LOGNET(networkLib::LogLevel::Info, "Client " << m_name << " identified as plugin " << _desc.pluginName << ", version " << _desc.pluginVersion);
 		m_name = m_pluginDesc.pluginName + '-' + m_name;
@@ -94,6 +102,7 @@ namespace bridgeServer
 			{
 				LOGNET(networkLib::LogLevel::Error, "Calculated hash " << calculatedHash.toString() << " of ROM " << p.romName << " does not match sent hash " <<  p.romHash.toString() << ", transfer error");
 				close();
+				return;
 			}
 
 			LOGNET(networkLib::LogLevel::Info, "Adding ROM " << p.romName << " with hash " << p.romHash.toString() << " to pool");
@@ -239,11 +248,12 @@ namespace bridgeServer
 		if(m_pluginDesc.pluginVersion == 0 || m_deviceCreateParams.romData.empty())
 			return;
 
-		m_device = m_server.getPlugins().createDevice(m_deviceCreateParams, m_pluginDesc);
+		std::string error;
+		m_device = m_server.getPlugins().createDevice(m_deviceCreateParams, m_pluginDesc, error);
 
 		if(!m_device)
 		{
-			errorClose(bridgeLib::ErrorCode::FailedToCreateDevice,"Failed to create device");
+			errorClose(bridgeLib::ErrorCode::FailedToCreateDevice, error);
 			return;
 		}
 

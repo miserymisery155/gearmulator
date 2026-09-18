@@ -6,7 +6,9 @@ int main()
 {
 	try
 	{
+		testFilesystem();
 		testMidiToSysex();
+		testShortMessage();
 		testUniversalTuning();
 
 		std::cout << std::endl;
